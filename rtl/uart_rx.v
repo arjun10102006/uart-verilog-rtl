@@ -1,48 +1,81 @@
-module uart_rx(
-    input clk,
-    input reset,
-    input rx,
-    input baud_tick,
+module uart_rx (
+    input            clk,
+    input            reset,
+    input            rx,
+    input            baud_tick_16x,
     output reg [7:0] data_out,
-    output reg done
+    output reg       done
 );
 
-reg [2:0] state;
+localparam IDLE  = 2'd0,
+           START = 2'd1,
+           DATA  = 2'd2,
+           STOP  = 2'd3;
+
+reg [1:0] state;
 reg [7:0] shift_reg;
 reg [3:0] bit_cnt;
-
-parameter IDLE=0, START=1, DATA=2, STOP=3;
+reg [3:0] sample_cnt;
 
 always @(posedge clk or posedge reset) begin
     if (reset) begin
-        state <= IDLE;
-        bit_cnt <= 0;
-        done <= 0;
+        state      <= IDLE;
+        bit_cnt    <= 0;
+        sample_cnt <= 0;
+        shift_reg  <= 8'h00;
+        data_out   <= 8'h00;
+        done       <= 0;
     end else begin
-        case(state)
+
+        done <= 0;
+
+        case (state)
 
         IDLE: begin
-            done <= 0;
-            if (rx == 0) state <= START;
+            sample_cnt <= 0;
+            bit_cnt    <= 0;
+            if (rx == 0)
+                state <= START;
         end
 
-        START: if (baud_tick) begin
-            state <= DATA;
-            bit_cnt <= 0;
-        end
-
-        DATA: if (baud_tick) begin
-            shift_reg[bit_cnt] <= rx;
-            bit_cnt <= bit_cnt + 1;
-            if (bit_cnt == 7) state <= STOP;
-        end
-
-        STOP: if (baud_tick) begin
-            if (rx == 1) begin
-                data_out <= shift_reg;
-                done <= 1;
+        START: begin
+            if (baud_tick_16x) begin
+                if (sample_cnt == 4'd7) begin
+                    sample_cnt <= 0;
+                    if (rx == 0)
+                        state <= DATA;
+                    else
+                        state <= IDLE;
+                end else
+                    sample_cnt <= sample_cnt + 1;
             end
-            state <= IDLE;
+        end
+
+        DATA: begin
+            if (baud_tick_16x) begin
+                if (sample_cnt == 4'd15) begin
+                    sample_cnt         <= 0;
+                    shift_reg[bit_cnt] <= rx;
+                    bit_cnt            <= bit_cnt + 1;
+                    if (bit_cnt == 4'd7)
+                        state <= STOP;
+                end else
+                    sample_cnt <= sample_cnt + 1;
+            end
+        end
+
+        STOP: begin
+            if (baud_tick_16x) begin
+                if (sample_cnt == 4'd15) begin
+                    sample_cnt <= 0;
+                    if (rx == 1) begin
+                        data_out <= shift_reg;
+                        done     <= 1;
+                    end
+                    state <= IDLE;
+                end else
+                    sample_cnt <= sample_cnt + 1;
+            end
         end
 
         endcase
